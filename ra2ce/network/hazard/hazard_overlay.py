@@ -373,7 +373,7 @@ class HazardOverlay:
         # Check if the graph needs to be reprojected
         _hazard_crs = pyproj.CRS.from_user_input(self._hazard_crs)
         _graph_crs = pyproj.CRS.from_user_input(
-            "EPSG:4326"
+            "EPSG:28992"
         )  # this is WGS84, TODO: Make flexible by including in the network ini
 
         if _hazard_crs != _graph_crs:
@@ -405,7 +405,7 @@ class HazardOverlay:
         # Check if the graph needs to be reprojected
         _hazard_crs = pyproj.CRS.from_user_input(self._hazard_crs)
         _graph_crs = pyproj.CRS.from_user_input(
-            "EPSG:4326"
+            "EPSG:28992"
         )  # this is WGS84, TODO: Make flexible by including in the network ini
 
         if (

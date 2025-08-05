@@ -407,7 +407,7 @@ class OsmNetworkWrapper(NetworkWrapperProtocol):
             or not graph.graph["crs"]
             or isinstance(graph.graph["crs"], str)
         ):
-            graph.graph["crs"] = pyproj.CRS("epsg:4326")
+            graph.graph["crs"] = pyproj.CRS("epsg:28992")
         nut.add_missing_geoms_graph(graph=graph, geom_name="geometry").to_directed()
 
         for node_nearest_edge_data in filter(

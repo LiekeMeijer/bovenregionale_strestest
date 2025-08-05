@@ -93,6 +93,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "avgspeed",
                     "bridge",
                     "tunnel",
+                    'NWSCODE', 'NWSNAAM', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )
         else:
@@ -105,6 +106,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "avgspeed",
                     "bridge",
                     "tunnel",
+                    'NWSCODE', 'NWSNAAM', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )
         edges, nodes = self.get_network_edges_and_nodes_from_graph(graph)
@@ -274,7 +276,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
 
         # Set the CRS for updated_graph equal to the CRS of graph_complex
         updated_graph.graph["crs"] = graph_complex.graph.get(
-            "crs", pyproj.CRS("EPSG:4326")
+            "crs", pyproj.CRS("EPSG:28992")
         )
         updated_graph.graph["name"] = graph_complex.graph.get("name", None)
         return updated_graph

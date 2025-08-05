@@ -64,7 +64,7 @@ class AnalysisResultWrapperExporter:
             export_path [Path]: path to save
         """
         # save to shapefile
-        gdf.crs = "epsg:4326"  # TODO: decide if this should be variable with e.g. an output_crs configured
+        gdf.crs = gdf.crs  # TODO: decide if this should be variable with e.g. an output_crs configured
 
         for col in gdf.columns:
             if gdf[col].dtype == object and col != gdf.geometry.name:

@@ -103,7 +103,7 @@ class NetworkConfigData(ConfigDataProtocol):
     output_path: Optional[Path] = None
     static_path: Optional[Path] = None
     # CRS is not yet supported in the ini file, it might be relocated to a subsection.
-    crs: CRS = field(default_factory=lambda: CRS.from_user_input(4326))
+    crs: CRS = field(default_factory=lambda: CRS.from_user_input(28992))
     project: ProjectSection = field(default_factory=ProjectSection)
     network: NetworkSection = field(default_factory=NetworkSection)
     origins_destinations: OriginsDestinationsSection = field(

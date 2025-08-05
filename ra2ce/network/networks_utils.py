@@ -1217,7 +1217,7 @@ def get_normalized_geojson_polygon(geojson_path: Path) -> BaseGeometry:
     return shape(_read_geojson.geometry[0]).buffer(0)
 
 
-def read_merge_shp(shp_file_analyse, id_name, shp_file_diversion=[], crs_=4326):
+def read_merge_shp(shp_file_analyse, id_name, shp_file_diversion=[], crs_=28992):
     """Imports shapefile(s) and saves attributes in a pandas dataframe.
 
     Args:

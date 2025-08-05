@@ -1,4 +1,4 @@
-name: ra2ce_env
+name: ra2ce_env_brs
 channels:
   - conda-forge
   - nodefaults
