@@ -87,26 +87,28 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
             graph = self._get_direct_graph_from_vector(
                 gdf=gdf,
                 edge_attributes_to_include=[
-                    "lanes",
+                    'lanes',
                     "length",
                     "maxspeed",
                     "avgspeed",
                     "bridge",
                     "tunnel",
-                    'NWSCODE', 'NWSNAAM', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
+                    'id_NWB',
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )
         else:
             graph = self._get_undirected_graph_from_vector(
                 gdf,
                 edge_attributes_to_include=[
-                    "lanes",
+                    'lanes',
                     "length",
                     "maxspeed",
                     "avgspeed",
                     "bridge",
                     "tunnel",
-                    'NWSCODE', 'NWSNAAM', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
+                    'id_NWB',
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )
         edges, nodes = self.get_network_edges_and_nodes_from_graph(graph)

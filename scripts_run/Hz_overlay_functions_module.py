@@ -1,5 +1,8 @@
 import geopandas as gpd
 from shapely.geometry import LineString
+import shutil
+import rasterio
+import numpy as np
 
 def load_region_shapefile(region_shapefile, region_name):
     region_gdf = gpd.read_file(region_shapefile)
@@ -49,39 +52,57 @@ def load_networks(HWN_network_path, NWB_network_path):
     print(Joined_Network.columns)
     
     return Joined_Network
+'''
+def filter_network_by_region(joined_network_gdf, filtered_region, code):
+    region_geom = filtered_region.geometry.iloc[0]
+    # Remove rows with missing code
+    valid_gdf = joined_network_gdf[joined_network_gdf[code].notna() & (joined_network_gdf[code] != '')].copy()
+    # Find codes where any segment intersects the region
+    intersects_mask = valid_gdf.intersects(region_geom)
+    intersecting_codes = valid_gdf.loc[intersects_mask, code].unique()
+    # Filter for all segments with those codes
+    filtered_network_gdf = joined_network_gdf[joined_network_gdf[code].isin(intersecting_codes)].copy()
+    return filtered_network_gdf
+
+'''
 
 def filter_network_by_region(joined_network_gdf, filtered_region, code):
-    grouped_networks = joined_network_gdf.groupby(code)
-    intersecting_nwscodes = []
-
-    for nwscode, group in grouped_networks:
-        # Convert group back to GeoDataFrame to access spatial methods
-        group_gdf = gpd.GeoDataFrame(group, geometry='geometry')
-        if group_gdf.intersects(filtered_region.geometry.iloc[0]).any():
-            intersecting_nwscodes.append(nwscode)
-
-    filtered_network_gdf = joined_network_gdf[joined_network_gdf[code].isin(intersecting_nwscodes)]
+    region_geom = filtered_region.geometry.iloc[0]
+    # Remove rows with missing code and code == '000-0000'
+    valid_gdf = joined_network_gdf[
+        joined_network_gdf[code].notna() &
+        (joined_network_gdf[code] != '') &
+        (joined_network_gdf[code] != '000-0000')
+    ].copy()
+    # Find codes where any segment intersects the region
+    intersects_mask = valid_gdf.intersects(region_geom)
+    intersecting_codes = valid_gdf.loc[intersects_mask, code].unique()
+    # Filter for all segments with those codes, also exclude '000-0000'
+    filtered_network_gdf = joined_network_gdf[
+        joined_network_gdf[code].isin(intersecting_codes) &
+        (joined_network_gdf[code] != '000-0000')
+    ].copy()
     return filtered_network_gdf
 
 def create_segments_simple(geometry, segment_length=100):
     if geometry.geom_type != 'LineString':
-        gdf = gpd.GeoDataFrame({
+        return gpd.GeoDataFrame({
             'REF_ID': [1],
             'highway': ['motorway'],
             'geometry': [geometry]
         })
-        return gdf
 
     total_length = geometry.length
     if total_length <= segment_length:
-        gdf = gpd.GeoDataFrame({
+        return gpd.GeoDataFrame({
             'REF_ID': [1],
             'highway': ['motorway'],
             'geometry': [geometry]
         })
-        return gdf
 
     segments = []
+    ref_ids = []
+    highways = []
     num_segments = int(total_length / segment_length)
 
     for i in range(num_segments):
@@ -91,7 +112,6 @@ def create_segments_simple(geometry, segment_length=100):
         end_point = geometry.interpolate(end_dist)
 
         try:
-            distances = []
             points = []
             step_size = min(10, segment_length / 10)
             current_dist = start_dist
@@ -113,12 +133,16 @@ def create_segments_simple(geometry, segment_length=100):
             if len(unique_points) >= 2:
                 segment = LineString(unique_points)
                 segments.append(segment)
+                ref_ids.append(i + 1)
+                highways.append('motorway')
 
         except Exception:
             try:
                 segment = LineString([start_point.coords[0], end_point.coords[0]])
                 if segment.length > 0:
                     segments.append(segment)
+                    ref_ids.append(i + 1)
+                    highways.append('motorway')
             except Exception:
                 continue
 
@@ -145,28 +169,29 @@ def create_segments_simple(geometry, segment_length=100):
             if len(unique_points) >= 2:
                 remainder_segment = LineString(unique_points)
                 segments.append(remainder_segment)
+                ref_ids.append(len(ref_ids) + 1)
+                highways.append('motorway')
 
         except Exception:
             pass
 
-    # Create GeoDataFrame with ID and highway columns
     if segments:
         gdf = gpd.GeoDataFrame({
-            'REF_ID': range(1, len(segments) + 1),
-            'highway': ['motorway'] * len(segments),
+            'REF_ID': ref_ids,
+            'highway': highways,
             'geometry': segments
         })
         return gdf
     else:
-        gdf = gpd.GeoDataFrame({
+        return gpd.GeoDataFrame({
             'REF_ID': [1],
             'highway': ['motorway'],
             'geometry': [geometry]
         })
-        return gdf
+
     
 
-def move_overlay_file(overlay_path, output_path, filename="graph_hazard_overlay.gpkg"):
+def move_output_file(overlay_path, output_path, filename):
     """
     Move the graph_hazard_overlay.gpkg file from overlay_path to output_path.
     
@@ -200,3 +225,28 @@ def move_overlay_file(overlay_path, output_path, filename="graph_hazard_overlay.
     except Exception as e:
         print(f"Error moving file: {e}")
         return False
+    
+def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
+    """
+    Copies the flood map to the hazard path, renames .tiff to .tif if needed,
+    and sets all pixel values less than 0 to NoData.
+    Returns the destination path.
+    """
+    flood_map_filename = flood_map_path.name
+    # Convert .tiff extension to .tif if needed
+    if flood_map_filename.lower().endswith('.tiff'):
+        flood_map_filename = flood_map_filename[:-5] + '.tif'
+
+    destination_path = hazard_path.joinpath(flood_map_filename)
+    shutil.copy2(flood_map_path, destination_path)
+
+    # Set pixel values < 0 to NoData
+    with rasterio.open(destination_path, "r+") as src:
+        data = src.read(1)
+        mask = data < 0
+        data[mask] = nodata_value
+        src.write(data, 1)
+        src.nodata = nodata_value
+        src.update_tags(nodata=nodata_value)
+
+    return destination_path
