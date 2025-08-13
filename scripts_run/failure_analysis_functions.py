@@ -322,3 +322,61 @@ def save_results(gdf_with_floods: gpd.GeoDataFrame, output_directory: str) -> Tu
     print(f"  - Excel: {excel_path}")
     
     return gpkg_path, excel_path
+
+import networkx as nx
+def cluster_connected(gdf):
+    """
+    Spatially cluster AFR ramps that are connected (touching).
+    Returns a copy of gdf with a 'cluster_id' column.
+    """
+    import networkx as nx
+    G = nx.Graph()
+    for idx, geom in gdf.geometry.items():
+        G.add_node(idx)
+    for idx1, geom1 in gdf.geometry.items():
+        for idx2, geom2 in gdf.geometry.items():
+            if idx1 < idx2 and geom1.touches(geom2):
+                G.add_edge(idx1, idx2)
+    clusters = list(nx.connected_components(G))
+    gdf = gdf.copy()
+    gdf["cluster_id"] = -1
+    for cluster_idx, cluster_nodes in enumerate(clusters):
+        gdf.loc[gdf.index.isin(cluster_nodes), "cluster_id"] = cluster_idx
+    return gdf
+
+import numpy as np
+def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
+    """
+    For each cluster (from 'cluster_id'), create a point (centroid of all geometries in cluster)
+    and aggregate the specified column using the given method ('mean', 'median', 'max').
+    
+    Args:
+        gdf: GeoDataFrame with 'cluster_id' column
+        aggregation_column: Name of the column to aggregate
+        method: Aggregation method ('mean', 'median', 'max')
+        
+    Returns:
+        GeoDataFrame with one point per cluster and aggregated column
+    """
+    clusters = []
+    for cluster_id, group in gdf.groupby("cluster_id"):
+        # Aggregate geometry: centroid of all geometries in cluster
+        centroid = group.geometry.unary_union.centroid
+        # Aggregate values
+        values = group[aggregation_column].dropna()
+        if len(values) == 0:
+            agg_value = np.nan
+        elif method == "mean":
+            agg_value = values.mean()
+        elif method == "median":
+            agg_value = values.median()
+        elif method == "max":
+            agg_value = values.max()
+        else:
+            raise ValueError("Unknown aggregation method: {}".format(method))
+        clusters.append({
+            "cluster_id": cluster_id,
+            "geometry": centroid,
+            aggregation_column: agg_value
+        })
+    return gpd.GeoDataFrame(clusters, geometry="geometry", crs=gdf.crs)
