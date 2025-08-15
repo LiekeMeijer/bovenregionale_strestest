@@ -94,6 +94,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "bridge",
                     "tunnel",
                     'id_NWB',
+                    'BST_CODE_N',
                     'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )
@@ -108,6 +109,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "bridge",
                     "tunnel",
                     'id_NWB',
+                    'BST_CODE_N',
                     'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR', 'NWBWGDL'
                 ],
             )

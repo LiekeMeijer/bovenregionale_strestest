@@ -225,7 +225,7 @@ def move_output_file(overlay_path, output_path, filename):
     except Exception as e:
         print(f"Error moving file: {e}")
         return False
-    
+'''    
 def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
     """
     Copies the flood map to the hazard path, renames .tiff to .tif if needed,
@@ -250,3 +250,26 @@ def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
         src.update_tags(nodata=nodata_value)
 
     return destination_path
+'''
+import rasterio
+
+def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
+    import os
+    from rasterio.windows import Window
+
+    flood_map_filename = flood_map_path.name
+    # Convert .tiff extension to .tif if needed
+    if flood_map_filename.lower().endswith('.tiff'):
+        flood_map_filename = flood_map_filename[:-5] + '.tif'
+
+    output_file = hazard_path.joinpath(flood_map_filename)
+    with rasterio.open(flood_map_path) as src:
+        profile = src.profile
+        profile.update(nodata=nodata_value)
+        with rasterio.open(output_file, 'w', **profile) as dst:
+            for ji, window in src.block_windows(1):
+                data = src.read(1, window=window)
+                mask = data < 0
+                data[mask] = nodata_value
+                dst.write(data, 1, window=window)
+            dst.update_tags(nodata=nodata_value)
