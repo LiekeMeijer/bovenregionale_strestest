@@ -250,7 +250,7 @@ def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
         src.update_tags(nodata=nodata_value)
 
     return destination_path
-'''
+
 import rasterio
 
 def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
@@ -273,3 +273,41 @@ def copy_and_prepare_flood_map(flood_map_path, hazard_path, nodata_value=-9999):
                 data[mask] = nodata_value
                 dst.write(data, 1, window=window)
             dst.update_tags(nodata=nodata_value)
+            
+'''            
+import rasterio
+from rasterio.mask import mask
+
+def copy_and_prepare_flood_map(flood_map_path, hazard_path, filtered_region, nodata_value=-9999):
+    """
+    Crops the flood map to the filtered_region polygon and sets all pixel values less than 0 to NoData.
+    Returns the destination path.
+    """
+    flood_map_filename = flood_map_path.name
+    if flood_map_filename.lower().endswith('.tiff'):
+        flood_map_filename = flood_map_filename[:-5] + '.tif'
+
+    output_file = hazard_path.joinpath(flood_map_filename)
+
+    # Get the polygon geometry in GeoJSON format
+    geoms = [geom.__geo_interface__ for geom in filtered_region.geometry]
+
+    with rasterio.open(flood_map_path) as src:
+        out_image, out_transform = mask(src, geoms, crop=True, nodata=nodata_value)
+        # Set negative values to nodata
+        out_image[out_image < 0] = nodata_value
+
+        out_meta = src.meta.copy()
+        out_meta.update({
+            "driver": "GTiff",
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform,
+            "nodata": nodata_value
+        })
+
+        with rasterio.open(output_file, "w", **out_meta) as dst:
+            dst.write(out_image)
+            dst.update_tags(nodata=nodata_value)
+
+    return output_file

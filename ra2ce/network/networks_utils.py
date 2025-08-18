@@ -1527,7 +1527,7 @@ def fraction_flooded(line: LineString, hazard_map: str):
             [
                 shape(x[0])
                 for x in shapes(out_image, transform=out_transform)
-                if x[-1] > 0
+                if x[-1] > 0.3
             ]
         )
         flooded_cells = gpd.GeoDataFrame({"geometry": [flooded_cells]})
