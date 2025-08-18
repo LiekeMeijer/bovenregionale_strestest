@@ -380,3 +380,38 @@ def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
             aggregation_column: agg_value
         })
     return gpd.GeoDataFrame(clusters, geometry="geometry", crs=gdf.crs)
+
+
+def aggregate_line_sections(network_gdf, column, agg_method='mean'):
+    """
+    Dissolves segments based on the specified column and aggregates EV columns using the specified method.
+
+    Parameters:
+        network_gdf (GeoDataFrame): Input GeoDataFrame with 'id_NWB' and EV columns.
+        column (str): Column name to dissolve by.
+        agg_method (str): Aggregation method: 'mean', 'median', 'min', or 'max'.
+
+    Returns:
+        GeoDataFrame: Aggregated GeoDataFrame.
+    """
+    import numpy as np
+
+    # Select EV columns automatically
+    ev_columns = [col for col in network_gdf.columns if col.startswith('EV')]
+
+    agg_funcs = {
+        'mean': np.mean,
+        'median': np.median,
+        'min': np.min,
+        'max': np.max
+    }
+    if agg_method not in agg_funcs:
+        raise ValueError("agg_method must be one of: 'mean', 'median', 'min', 'max'")
+
+    agg_dict = {col: agg_funcs[agg_method] for col in ev_columns}
+
+    # Dissolve by 'id_NWB' and aggregate EV columns
+    aggregated_gdf = network_gdf.dissolve(by=column, aggfunc=agg_dict)
+    aggregated_gdf = aggregated_gdf.reset_index()  # Restore id_NWB as a column
+
+    return aggregated_gdf
