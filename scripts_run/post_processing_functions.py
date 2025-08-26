@@ -344,7 +344,7 @@ def cluster_connected(gdf):
         gdf.loc[gdf.index.isin(cluster_nodes), "cluster_id"] = cluster_idx
     return gdf
 
-import numpy as np
+
 from shapely.ops import nearest_points
 def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
     """
@@ -399,7 +399,7 @@ def aggregate_line_sections(network_gdf, column, agg_method='mean'):
     Returns:
         GeoDataFrame: Aggregated GeoDataFrame.
     """
-    import numpy as np
+    
 
     # Select EV columns automatically
     ev_columns = [col for col in network_gdf.columns if col.startswith('EV')]
@@ -420,3 +420,285 @@ def aggregate_line_sections(network_gdf, column, agg_method='mean'):
     aggregated_gdf = aggregated_gdf.reset_index()  # Restore id_NWB as a column
 
     return aggregated_gdf
+
+def get_z_height_optimized(lines_gdf, points_gdf, threshold=50.0):
+    # Create spatial index for points
+    points_sindex = points_gdf.sindex
+    
+    # Initialize result array
+    z_heights = np.full(len(lines_gdf), np.nan)
+    
+    for idx, line_geom in enumerate(lines_gdf.geometry):
+        # Use spatial index to get potential matches
+        bounds = line_geom.bounds
+        # Expand bounds by threshold
+        expanded_bounds = (
+            bounds[0] - threshold, bounds[1] - threshold,
+            bounds[2] + threshold, bounds[3] + threshold
+        )
+        
+        # Get potential point indices using spatial index
+        possible_matches_index = list(points_sindex.intersection(expanded_bounds))
+        
+        if possible_matches_index:
+            # Get the actual geometries
+            possible_matches = points_gdf.iloc[possible_matches_index]
+            
+            # Calculate distances (vectorized)
+            distances = possible_matches.geometry.distance(line_geom)
+            
+            # Filter points within threshold
+            within_threshold = distances <= threshold
+            
+            if within_threshold.any():
+                # Get Z values of points within threshold and calculate mean
+                z_values = possible_matches.loc[within_threshold, 'Z']
+                z_heights[idx] = z_values.mean()  # Use mean instead of nearest
+    
+    return z_heights
+
+
+def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf):
+    """
+    Calculates the percentage of each line segment overlapped by tunnels and bridges.
+    Updates lines_gdf in-place with 'tunnel_percentage' and 'bridge_percentage' columns.
+    """
+    # Ensure all use the same CRS
+    bridges_gdf = bridges_gdf.to_crs(lines_gdf.crs)
+    tunnels_gdf = tunnels_gdf.to_crs(lines_gdf.crs)
+
+    # Initialize percentage columns
+    lines_gdf['tunnel_percentage'] = 0.0
+    lines_gdf['bridge_percentage'] = 0.0
+
+    # Calculate tunnel overlay percentages (avoiding double counting)
+    for idx, line_row in lines_gdf.iterrows():
+        line_geom = line_row.geometry
+        intersecting_tunnels = tunnels_gdf[tunnels_gdf.geometry.intersects(line_geom)]
+        if not intersecting_tunnels.empty:
+            tunnel_union = intersecting_tunnels.geometry.unary_union
+            intersection = line_geom.intersection(tunnel_union)
+            if not intersection.is_empty:
+                if intersection.geom_type == 'LineString':
+                    overlap_length = intersection.length
+                elif intersection.geom_type == 'MultiLineString':
+                    overlap_length = sum(geom.length for geom in intersection.geoms)
+                else:
+                    overlap_length = 0
+                percentage = (overlap_length / line_geom.length) * 100
+                lines_gdf.loc[idx, 'tunnel_percentage'] = percentage
+
+    # Calculate bridge overlay percentages (avoiding double counting)
+    for idx, line_row in lines_gdf.iterrows():
+        line_geom = line_row.geometry
+        intersecting_bridges = bridges_gdf[bridges_gdf.geometry.intersects(line_geom)]
+        if not intersecting_bridges.empty:
+            bridge_union = intersecting_bridges.geometry.unary_union
+            intersection = line_geom.intersection(bridge_union)
+            if not intersection.is_empty:
+                if intersection.geom_type == 'LineString':
+                    overlap_length = intersection.length
+                elif intersection.geom_type == 'MultiLineString':
+                    overlap_length = sum(geom.length for geom in intersection.geoms)
+                else:
+                    overlap_length = 0
+                percentage = (overlap_length / line_geom.length) * 100
+                lines_gdf.loc[idx, 'bridge_percentage'] = percentage
+
+    return lines_gdf
+
+def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_col='NETWERKSCH'):
+    """
+    Aggregates flooded segments and saves results to file.
+
+    Parameters:
+        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
+        output_dir (Path): Output directory for saving files.
+        dissolve_col (str): Column to dissolve by (default: 'NETWERKSCH').
+    """
+    # Step 1: Initialize the score column
+    gdf['Flood_uncertainty'] = 0
+
+    # Step 2: Add 1 if EV1_fr < 0.2
+    gdf.loc[gdf['F_EV1_fr'] < 0.2, 'Flood_uncertainty'] += 1
+
+    # Step 3: Add 1 if both EV1_me and EV1_ma <= 0.3
+    gdf.loc[(gdf['F_EV1_me'] <= 0.3) & (gdf['F_EV1_ma'] <= 0.3), 'Flood_uncertainty'] += 1
+
+    # Step 2b: Add 1 if EV1_fr is between 0.2 and 0.3 and EV1_ma < 0.5
+    gdf.loc[(gdf['F_EV1_fr'] >= 0.2) & (gdf['F_EV1_fr'] < 0.3) & (gdf['F_EV1_ma'] < 0.5), 'Flood_uncertainty'] += 1
+
+    # Step 4: Define the isolation check
+    def is_isolated(index, flooded_series):
+        if not flooded_series.iloc[index]:
+            return False
+        neighbors = []
+        if index > 0:
+            neighbors.append(flooded_series.iloc[index - 1])
+        if index < len(flooded_series) - 1:
+            neighbors.append(flooded_series.iloc[index + 1])
+        return not any(neighbors)
+
+    # Step 5: Apply isolation logic and update score
+    gdf['is_flooded'] = gdf['Flood_uncertainty'] > 0
+    gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
+    gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
+
+    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
+    gdf.to_file(output_dir.joinpath(f"{ex}flooded_segments_case_based.gpkg"), driver='GPKG')
+
+    # Identify dam_EV columns
+    ev_cols = [col for col in gdf.columns if col.startswith('EV')]
+    dam_ev_cols = [col for col in gdf.columns if col.startswith('dam_EV')]
+
+    # Create new columns
+    for col in dam_ev_cols:
+        gdf[f'lower_{col}'] = gdf[col]
+        gdf[f'upper_{col}'] = gdf[col]
+
+    # Apply condition to zero out lower_dam_EV
+    condition = (
+        (gdf['Flood_uncertainty'] > 0) |
+        (gdf['bridge_percentage'] > 60) |
+        (gdf['tunnel_percentage'] > 60)
+    )
+
+    condition2 = (
+        (gdf['Flood_uncertainty'] > 0) 
+    )
+
+    for col in dam_ev_cols:
+        gdf.loc[condition, f'lower_{col}'] = 0
+
+    for col in dam_ev_cols:
+        gdf.loc[condition2, f'upper_{col}'] = 0
+
+    # Calculate flooded length per segment
+    #gdf['flooded_length'] = gdf['F_EV1_fr'] * gdf['length']
+
+    # Define aggregation dictionary
+    agg_dict = {
+        'length': 'sum',
+    **{f'lower_{col}': 'sum' for col in dam_ev_cols},
+    **{f'upper_{col}': 'sum' for col in dam_ev_cols},
+    **{col: ['mean', 'max', 'median'] for col in ev_cols}  # if you still want to include EV columns
+    }
+
+    # Dissolve geometries and aggregate
+    gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+
+    # Flatten multi-level columns
+    gdf_dissolved.columns = [
+        f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+        for col in gdf_dissolved.columns
+    ]
+
+    # Rename for clarity
+    gdf_dissolved = gdf_dissolved.rename(columns={
+        'length_sum': 'total_length',
+        'flooded_length_sum': 'flooded_length'
+    })
+
+    # Calculate fraction flooded
+    #gdf_dissolved['fraction_flooded'] = gdf_dissolved['flooded_length'] / gdf_dissolved['total_length']
+
+    # Convert to GeoDataFrame and set CRS
+    gdf_agg = gpd.GeoDataFrame(gdf_dissolved, geometry='geometry', crs=gdf.crs)
+    gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
+
+    # Save to file
+    gdf_agg = gdf_agg[gdf_agg.is_valid]
+
+    gdf_agg.to_file(output_dir.joinpath(f"{ex}Aggregated_flooded_segments.gpkg"), driver='GPKG')
+
+    return gdf_agg
+
+def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_col='NETWERKSCH'):
+    """
+    Aggregates flooded segments and saves results to file.
+
+    Parameters:
+        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
+        output_dir (Path): Output directory for saving files.
+        dissolve_col (str): Column to dissolve by (default: 'NETWERKSCH').
+    """
+    # Step 1: Initialize the score column
+    gdf['Flood_uncertainty'] = 0
+
+    # Step 2: Add 1 if EV1_fr < 0.2
+    gdf.loc[gdf['EV1_fr'] < 0.2, 'Flood_uncertainty'] += 1
+
+    # Step 3: Add 1 if both EV1_me and EV1_ma <= 0.3
+    gdf.loc[(gdf['EV1_me'] <= 0.3) & (gdf['EV1_ma'] <= 0.3), 'Flood_uncertainty'] += 1
+
+    # Step 2b: Add 1 if EV1_fr is between 0.2 and 0.3 and EV1_ma < 0.5
+    gdf.loc[(gdf['EV1_fr'] >= 0.2) & (gdf['EV1_fr'] < 0.3) & (gdf['EV1_ma'] < 0.5), 'Flood_uncertainty'] += 1
+
+    # Step 4: Define the isolation check
+    def is_isolated(index, flooded_series):
+        if not flooded_series.iloc[index]:
+            return False
+        neighbors = []
+        if index > 0:
+            neighbors.append(flooded_series.iloc[index - 1])
+        if index < len(flooded_series) - 1:
+            neighbors.append(flooded_series.iloc[index + 1])
+        return not any(neighbors)
+
+    # Step 5: Apply isolation logic and update score
+    gdf['is_flooded'] = gdf['Flood_uncertainty'] > 0
+    gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
+    gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
+
+    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
+    gdf.to_file(output_dir.joinpath(f"{ex}flooded_segments_case_based.gpkg"), driver='GPKG')
+
+    ev_cols = [col for col in gdf.columns if col.startswith('EV')]
+    gdf.loc[
+        (gdf['Flood_uncertainty'] > 0) | 
+        (gdf['bridge_percentage'] > 60) | 
+        (gdf['tunnel_percentage'] > 60), 
+        ev_cols
+    ] = 0
+
+    # Calculate flooded length per segment
+    gdf['flooded_length'] = gdf['EV1_fr'] * gdf['length']
+    gdf['bridge_length'] = (gdf['bridge_percentage'] / 100) * gdf['length']
+    gdf['tunnel_length'] = (gdf['tunnel_percentage'] / 100) * gdf['length']
+
+    # Define aggregation dictionary
+    agg_dict = {
+        'length': 'sum',
+        'flooded_length': 'sum',
+        'bridge_length': 'sum',
+        'tunnel_length': 'sum',
+        **{col: ['mean', 'max', 'median'] for col in ev_cols}
+    }
+
+    # Dissolve geometries and aggregate
+    gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+
+    # Flatten multi-level columns
+    gdf_dissolved.columns = [
+        f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+        for col in gdf_dissolved.columns
+    ]
+
+    # Rename for clarity
+    gdf_dissolved = gdf_dissolved.rename(columns={
+        'length_sum': 'total_length',
+        'flooded_length_sum': 'flooded_length'
+    })
+
+    # Calculate fraction flooded
+    gdf_dissolved['fraction_flooded'] = gdf_dissolved['flooded_length'] / gdf_dissolved['total_length']
+
+    # Convert to GeoDataFrame and set CRS
+    gdf_agg = gpd.GeoDataFrame(gdf_dissolved, geometry='geometry', crs=gdf.crs)
+    gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
+
+    # Save to file
+    gdf_agg.to_file(output_dir.joinpath(f"{ex}Aggregated_flooded_segments.gpkg"), driver='GPKG')
+
+    return gdf_agg
+
