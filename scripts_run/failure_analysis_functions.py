@@ -345,9 +345,10 @@ def cluster_connected(gdf):
     return gdf
 
 import numpy as np
+from shapely.ops import nearest_points
 def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
     """
-    For each cluster (from 'cluster_id'), create a point (centroid of all geometries in cluster)
+    For each cluster (from 'cluster_id'), create a point (centroid snapped to nearest line in cluster)
     and aggregate the specified column using the given method ('mean', 'median', 'max').
     
     Args:
@@ -360,8 +361,12 @@ def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
     """
     clusters = []
     for cluster_id, group in gdf.groupby("cluster_id"):
-        # Aggregate geometry: centroid of all geometries in cluster
-        centroid = group.geometry.unary_union.centroid
+        # Aggregate geometry: union of all geometries in cluster
+        union_geom = group.geometry.unary_union
+        # Centroid of union
+        centroid = union_geom.centroid
+        # Snap centroid to nearest point on the unioned geometry (line)
+        snapped_point, _ = nearest_points(union_geom, centroid)
         # Aggregate values
         values = group[aggregation_column].dropna()
         if len(values) == 0:
@@ -376,7 +381,7 @@ def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
             raise ValueError("Unknown aggregation method: {}".format(method))
         clusters.append({
             "cluster_id": cluster_id,
-            "geometry": centroid,
+            "geometry": snapped_point,
             aggregation_column: agg_value
         })
     return gpd.GeoDataFrame(clusters, geometry="geometry", crs=gdf.crs)
