@@ -38,15 +38,16 @@ def get_flood_map_files(region: str, base_path: str) -> List[Path]:
     Returns:
         List of flood map file paths
     """
-    flood_map_folder = Path(base_path) / region / "Basisscenario" / "waterdiepte"
+    #flood_map_folder = Path(base_path) / region / "Basisscenario" / "waterdiepte"
+    flood_map_folder = Path(base_path) / region / "Inputs"/"static"/"hazard"
     
     if not flood_map_folder.exists():
         print(f"Warning: Folder {flood_map_folder} does not exist")
         return []
     
     flood_map_files = (
-        list(flood_map_folder.glob("*.tif")) + 
-        list(flood_map_folder.glob("*.tiff"))
+        list(flood_map_folder.glob("*wd_merge_clipNL.tif")) + 
+        list(flood_map_folder.glob("*wd_merge_clipNL.tiff"))
     )
     
     print(f"Found {len(flood_map_files)} flood map files for region {region}")
@@ -665,6 +666,8 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
     gdf['flooded_length'] = gdf['EV1_fr'] * gdf['length']
     gdf['bridge_length'] = (gdf['bridge_percentage'] / 100) * gdf['length']
     gdf['tunnel_length'] = (gdf['tunnel_percentage'] / 100) * gdf['length']
+
+    gdf.to_file(output_dir.joinpath(f"{ex}filtered_for_artefacts_assets.gpkg"), driver='GPKG')
 
     # Define aggregation dictionary
     agg_dict = {
