@@ -705,3 +705,55 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
 
     return gdf_agg
 
+
+
+def Thresholding_for_artefacts(gdf, output_dir):
+    """
+    creates columns based on different thresholding criteria and saves results to file.
+
+    Parameters:
+        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
+        output_dir (Path): Output directory for saving files.
+        
+    """
+    gdf['me_30_fr_20'] = 0
+    gdf['me_20_fr_20'] = 0
+    gdf['me_20_fr_30'] = 0
+    gdf['me_10_fr_20'] = 0
+    gdf['me_20'] = 0
+    gdf['isolated'] = 0
+    gdf['is_flooded'] = 0
+    gdf['Asset'] = 0
+    gdf['fr_20'] = 0
+
+    
+    gdf.loc[gdf['EV1_me'] < 0.2, 'me_20'] += 1
+    gdf.loc[(gdf['EV1_me'] <= 0.3) & (gdf['EV1_fr'] <= 0.2), 'me_30_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'] <= 0.2) & (gdf['EV1_fr'] <= 0.2), 'me_20_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'] <= 0.2) & (gdf['EV1_fr'] <= 0.3), 'me_20_fr_30'] += 1
+    gdf.loc[(gdf['EV1_me'] <= 0.1) & (gdf['EV1_fr'] <= 0.2), 'me_10_fr_20'] += 1
+    gdf.loc[gdf['EV1_me'] < 0.1, 'is_flooded'] += 1
+    gdf.loc[gdf['EV1_fr'] < 0.2, 'fr_20'] += 1  
+    gdf.loc[(gdf['bridge_percentage'] >= 60) | (gdf['tunnel_percentage'] >= 60), 'Asset'] += 1
+
+    # Step 4: Define the isolation check
+    def is_isolated(index, flooded_series):
+        if not flooded_series.iloc[index]:
+            return False
+        neighbors = []
+        if index > 0:
+            neighbors.append(flooded_series.iloc[index - 1])
+        if index < len(flooded_series) - 1:
+            neighbors.append(flooded_series.iloc[index + 1])
+        return not any(neighbors)
+
+    #gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
+    #gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
+
+    gdf['is_isolated'] = [1 if is_isolated(i, gdf['is_flooded']) else 0 for i in range(len(gdf))]
+
+    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
+    gdf.to_file(output_dir.joinpath(f"flooded_segments_threshold_test.gpkg"), driver='GPKG')
+
+    return gdf
+

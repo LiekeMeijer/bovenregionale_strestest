@@ -311,3 +311,72 @@ def copy_and_prepare_flood_map(flood_map_path, hazard_path, filtered_region, nod
             dst.update_tags(nodata=nodata_value)
 
     return output_file
+
+
+
+def filter_raster(hazard_file, output_dir):
+    with rasterio.open(hazard_file) as src:
+        # Read the data
+        data = src.read(1)
+        
+        # Check if there are any values below zero
+        if not np.any(data < 0.01):
+            print(f"There are no no data values in {hazard_file.name}")
+            return  # Skip processing
+        
+        # Create a mask for values below zero
+        mask = data < 0.01
+        
+        # Set values below zero to NoData
+        data[mask] = src.nodata
+        
+        # Update the metadata to reflect changes
+        meta = src.meta.copy()
+        
+        # Write the modified data to a new file in the output directory
+        output_file = output_dir / f"{hazard_file.stem}_processed.tif"
+        with rasterio.open(output_file, 'w', **meta) as dst:
+            dst.write(data, 1)
+        
+        print(f"Processed {hazard_file} to {output_file}")
+
+
+import rasterio
+from rasterio.mask import mask
+import numpy as np
+
+def process_Filter_flood_map(flood_map_path, hazard_path, filtered_region, nodata_value=-9999, threshold=0.01):
+    """
+    Crops the flood map to the filtered_region polygon and sets all pixel values less than the threshold to NoData.
+    Returns the destination path.
+    """
+    flood_map_filename = flood_map_path.name
+    if flood_map_filename.lower().endswith('.tiff'):
+        flood_map_filename = flood_map_filename[:-5] + '.tif'
+
+    output_file = hazard_path.joinpath(flood_map_filename)
+
+    # Get the polygon geometry in GeoJSON format
+    geoms = [geom.__geo_interface__ for geom in filtered_region.geometry]
+
+    with rasterio.open(flood_map_path) as src:
+        out_image, out_transform = mask(src, geoms, crop=True, nodata=nodata_value)
+
+        # Set values below threshold to nodata
+        out_image = np.where(out_image < threshold, nodata_value, out_image)
+
+        out_meta = src.meta.copy()
+        out_meta.update({
+            "driver": "GTiff",
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform,
+            "nodata": nodata_value
+        })
+
+        with rasterio.open(output_file, "w", **out_meta) as dst:
+            dst.write(out_image)
+            dst.update_tags(nodata=nodata_value)
+
+    print(f"Processed flood map saved to: {output_file}")
+    return output_file
