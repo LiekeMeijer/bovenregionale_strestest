@@ -459,7 +459,7 @@ def get_z_height_optimized(lines_gdf, points_gdf, threshold=50.0):
     return z_heights
 
 
-def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf):
+def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf,viaducts_gdf):
     """
     Calculates the percentage of each line segment overlapped by tunnels and bridges.
     Updates lines_gdf in-place with 'tunnel_percentage' and 'bridge_percentage' columns.
@@ -467,10 +467,12 @@ def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf):
     # Ensure all use the same CRS
     bridges_gdf = bridges_gdf.to_crs(lines_gdf.crs)
     tunnels_gdf = tunnels_gdf.to_crs(lines_gdf.crs)
+    viaducts_gdf = viaducts_gdf.to_crs(lines_gdf.crs)
 
     # Initialize percentage columns
     lines_gdf['tunnel_percentage'] = 0.0
     lines_gdf['bridge_percentage'] = 0.0
+    lines_gdf['viaduct_percentage'] = 0.0
 
     # Calculate tunnel overlay percentages (avoiding double counting)
     for idx, line_row in lines_gdf.iterrows():
@@ -505,6 +507,22 @@ def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf):
                     overlap_length = 0
                 percentage = (overlap_length / line_geom.length) * 100
                 lines_gdf.loc[idx, 'bridge_percentage'] = percentage
+
+    for idx, line_row in lines_gdf.iterrows():
+        line_geom = line_row.geometry
+        intersecting_viaducts = viaducts_gdf[viaducts_gdf.geometry.intersects(line_geom)]
+        if not intersecting_viaducts.empty:
+            viaduct_union = intersecting_viaducts.geometry.unary_union
+            intersection = line_geom.intersection(viaduct_union)
+            if not intersection.is_empty:
+                if intersection.geom_type == 'LineString':
+                    overlap_length = intersection.length
+                elif intersection.geom_type == 'MultiLineString':
+                    overlap_length = sum(geom.length for geom in intersection.geoms)
+                else:
+                    overlap_length = 0
+                percentage = (overlap_length / line_geom.length) * 100
+                lines_gdf.loc[idx, 'viaduct_percentage'] = percentage
 
     return lines_gdf
 
@@ -560,8 +578,8 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
     # Apply condition to zero out lower_dam_EV
     condition = (
         (gdf['Flood_uncertainty'] > 0) |
-        (gdf['bridge_percentage'] > 60) |
-        (gdf['tunnel_percentage'] > 60)
+        (gdf['bridge_percentage'] > 10) |
+        (gdf['tunnel_percentage'] > 20)
     )
 
     condition2 = (
@@ -727,14 +745,14 @@ def Thresholding_for_artefacts(gdf, output_dir):
     gdf['fr_20'] = 0
 
     
-    gdf.loc[gdf['EV1_me'] < 0.2, 'me_20'] += 1
-    gdf.loc[(gdf['EV1_me'] <= 0.3) & (gdf['EV1_fr'] <= 0.2), 'me_30_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'] <= 0.2) & (gdf['EV1_fr'] <= 0.2), 'me_20_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'] <= 0.2) & (gdf['EV1_fr'] <= 0.3), 'me_20_fr_30'] += 1
-    gdf.loc[(gdf['EV1_me'] <= 0.1) & (gdf['EV1_fr'] <= 0.2), 'me_10_fr_20'] += 1
-    gdf.loc[gdf['EV1_me'] < 0.1, 'is_flooded'] += 1
-    gdf.loc[gdf['EV1_fr'] < 0.2, 'fr_20'] += 1  
-    gdf.loc[(gdf['bridge_percentage'] >= 60) | (gdf['tunnel_percentage'] >= 60), 'Asset'] += 1
+    gdf.loc[gdf['EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.3) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) & (gdf['EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_10_fr_20'] += 1
+    gdf.loc[gdf['EV1_me'].fillna(0) < 0.1, 'is_flooded'] += 1
+    gdf.loc[gdf['EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1  
+    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 60) | (gdf['tunnel_percentage'].fillna(0) >= 60), 'Asset'] += 1
 
     # Step 4: Define the isolation check
     def is_isolated(index, flooded_series):
@@ -756,4 +774,66 @@ def Thresholding_for_artefacts(gdf, output_dir):
     gdf.to_file(output_dir.joinpath(f"flooded_segments_threshold_test.gpkg"), driver='GPKG')
 
     return gdf
+
+def Thresholding_for_artefacts_ver02(gdf, output_dir):
+    """
+    creates columns based on different thresholding criteria and saves results to file.
+
+    Parameters:
+        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
+        output_dir (Path): Output directory for saving files.
+        
+    """
+    gdf['me_30_fr_20'] = 0
+    gdf['me_20_fr_20'] = 0
+    gdf['me_20_fr_30'] = 0
+    gdf['OR_me_10_fr_20'] = 0
+    gdf['OR_me_10_fr_25'] = 0
+    gdf['AND_me_10_fr_20'] = 0
+    gdf['culvert'] = 0
+    gdf['me_20'] = 0
+    gdf['isolated'] = 0
+    gdf['is_flooded'] = 0
+    gdf['Asset'] = 0
+    gdf['fr_20'] = 0
+    gdf['artefact'] = 0
+
+    
+    gdf.loc[gdf['EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.3) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) | (gdf['EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) | (gdf['EV1_fr'].fillna(0) <= 0.25), 'OR_me_10_fr_25'] += 1
+    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
+    
+    gdf.loc[gdf['EV1_me'].fillna(0) > 0.1, 'is_flooded'] += 1
+    gdf.loc[gdf['EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1
+    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['tunnel_percentage'].fillna(0) >= 20) | (gdf['viaduct_percentage'].fillna(0) >= 30), 'Asset'] += 1
+
+    #gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1), 'artefact'] += 1
+
+
+    # Step 4: Define the isolation check
+    def is_isolated(index, flooded_series):
+        if not flooded_series.iloc[index]:
+            return False
+        neighbors = []
+        if index > 0:
+            neighbors.append(flooded_series.iloc[index - 1])
+        if index < len(flooded_series) - 1:
+            neighbors.append(flooded_series.iloc[index + 1])
+        return not any(neighbors)
+
+    #gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
+    #gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
+
+    gdf['is_isolated'] = [1 if is_isolated(i, gdf['is_flooded']) else 0 for i in range(len(gdf))]
+    gdf.loc[(gdf['EV1_ma'].fillna(0) >= 0.3) & (gdf['EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
+    gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1) | (gdf['viaduct_percentage'] >= 10), 'artefact'] += 1
+
+    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
+    gdf.to_file(output_dir.joinpath(f"flooded_segments_threshold_OR.gpkg"), driver='GPKG')
+
+    return gdf    
 
