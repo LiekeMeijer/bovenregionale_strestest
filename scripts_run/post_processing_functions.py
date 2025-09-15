@@ -535,40 +535,11 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
         output_dir (Path): Output directory for saving files.
         dissolve_col (str): Column to dissolve by (default: 'NETWERKSCH').
     """
-    # Step 1: Initialize the score column
-    gdf['Flood_uncertainty'] = 0
-
-    # Step 2: Add 1 if EV1_fr < 0.2
-    gdf.loc[gdf['F_EV1_fr'] < 0.2, 'Flood_uncertainty'] += 1
-
-    # Step 3: Add 1 if both EV1_me and EV1_ma <= 0.3
-    gdf.loc[(gdf['F_EV1_me'] <= 0.3) & (gdf['F_EV1_ma'] <= 0.3), 'Flood_uncertainty'] += 1
-
-    # Step 2b: Add 1 if EV1_fr is between 0.2 and 0.3 and EV1_ma < 0.5
-    gdf.loc[(gdf['F_EV1_fr'] >= 0.2) & (gdf['F_EV1_fr'] < 0.3) & (gdf['F_EV1_ma'] < 0.5), 'Flood_uncertainty'] += 1
-
-    # Step 4: Define the isolation check
-    def is_isolated(index, flooded_series):
-        if not flooded_series.iloc[index]:
-            return False
-        neighbors = []
-        if index > 0:
-            neighbors.append(flooded_series.iloc[index - 1])
-        if index < len(flooded_series) - 1:
-            neighbors.append(flooded_series.iloc[index + 1])
-        return not any(neighbors)
-
-    # Step 5: Apply isolation logic and update score
-    gdf['is_flooded'] = gdf['Flood_uncertainty'] > 0
-    gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
-    gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
-
-    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
-    gdf.to_file(output_dir.joinpath(f"{ex}flooded_segments_case_based.gpkg"), driver='GPKG')
+    
 
     # Identify dam_EV columns
-    ev_cols = [col for col in gdf.columns if col.startswith('EV')]
-    dam_ev_cols = [col for col in gdf.columns if col.startswith('dam_EV')]
+    #ev_cols = [col for col in gdf.columns if col.startswith('EV1')]
+    dam_ev_cols = [col for col in gdf.columns if col.startswith('dam_EV1')]
 
     # Create new columns
     for col in dam_ev_cols:
@@ -577,13 +548,12 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
 
     # Apply condition to zero out lower_dam_EV
     condition = (
-        (gdf['Flood_uncertainty'] > 0) |
-        (gdf['bridge_percentage'] > 10) |
-        (gdf['tunnel_percentage'] > 20)
+        (gdf['artefact'] > 0) |
+        (gdf['Asset'] > 0) 
     )
 
     condition2 = (
-        (gdf['Flood_uncertainty'] > 0) 
+        (gdf['artefact'] > 0) 
     )
 
     for col in dam_ev_cols:
@@ -592,15 +562,13 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
     for col in dam_ev_cols:
         gdf.loc[condition2, f'upper_{col}'] = 0
 
-    # Calculate flooded length per segment
-    #gdf['flooded_length'] = gdf['F_EV1_fr'] * gdf['length']
 
     # Define aggregation dictionary
     agg_dict = {
         'length': 'sum',
-    **{f'lower_{col}': 'sum' for col in dam_ev_cols},
-    **{f'upper_{col}': 'sum' for col in dam_ev_cols},
-    **{col: ['mean', 'max', 'median'] for col in ev_cols}  # if you still want to include EV columns
+    **{f'lower_{col}': ['sum', 'mean', 'max', 'min'] for col in dam_ev_cols},
+    **{f'upper_{col}': ['sum', 'mean', 'max', 'min'] for col in dam_ev_cols}
+    #**{col: ['mean', 'max', 'median'] for col in ev_cols}  # if you still want to include EV columns
     }
 
     # Dissolve geometries and aggregate
@@ -628,7 +596,7 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
     # Save to file
     gdf_agg = gdf_agg[gdf_agg.is_valid]
 
-    gdf_agg.to_file(output_dir.joinpath(f"{ex}Aggregated_flooded_segments.gpkg"), driver='GPKG')
+    gdf_agg.to_file(output_dir.joinpath(f"{ex}_Aggregated.gpkg"), driver='GPKG')
 
     return gdf_agg
 
@@ -641,51 +609,22 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
         output_dir (Path): Output directory for saving files.
         dissolve_col (str): Column to dissolve by (default: 'NETWERKSCH').
     """
-    # Step 1: Initialize the score column
-    gdf['Flood_uncertainty'] = 0
 
-    # Step 2: Add 1 if EV1_fr < 0.2
-    gdf.loc[gdf['EV1_fr'] < 0.2, 'Flood_uncertainty'] += 1
-
-    # Step 3: Add 1 if both EV1_me and EV1_ma <= 0.3
-    gdf.loc[(gdf['EV1_me'] <= 0.3) & (gdf['EV1_ma'] <= 0.3), 'Flood_uncertainty'] += 1
-
-    # Step 2b: Add 1 if EV1_fr is between 0.2 and 0.3 and EV1_ma < 0.5
-    gdf.loc[(gdf['EV1_fr'] >= 0.2) & (gdf['EV1_fr'] < 0.3) & (gdf['EV1_ma'] < 0.5), 'Flood_uncertainty'] += 1
-
-    # Step 4: Define the isolation check
-    def is_isolated(index, flooded_series):
-        if not flooded_series.iloc[index]:
-            return False
-        neighbors = []
-        if index > 0:
-            neighbors.append(flooded_series.iloc[index - 1])
-        if index < len(flooded_series) - 1:
-            neighbors.append(flooded_series.iloc[index + 1])
-        return not any(neighbors)
-
-    # Step 5: Apply isolation logic and update score
-    gdf['is_flooded'] = gdf['Flood_uncertainty'] > 0
-    gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
-    gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
 
     gdf = gdf.set_crs("EPSG:28992", allow_override=True)
-    gdf.to_file(output_dir.joinpath(f"{ex}flooded_segments_case_based.gpkg"), driver='GPKG')
 
-    ev_cols = [col for col in gdf.columns if col.startswith('EV')]
-    gdf.loc[
-        (gdf['Flood_uncertainty'] > 0) | 
-        (gdf['bridge_percentage'] > 60) | 
-        (gdf['tunnel_percentage'] > 60), 
-        ev_cols
-    ] = 0
+    
+    ev_cols = [col for col in gdf.columns if col.startswith('EV1')]
+    condition = (gdf['artefact'] > 0) | (gdf['Asset'] > 0) | (gdf['EV1_me'] < 0.2)
+    for col in ev_cols:
+        gdf.loc[condition, col] = 0
 
     # Calculate flooded length per segment
     gdf['flooded_length'] = gdf['EV1_fr'] * gdf['length']
     gdf['bridge_length'] = (gdf['bridge_percentage'] / 100) * gdf['length']
     gdf['tunnel_length'] = (gdf['tunnel_percentage'] / 100) * gdf['length']
 
-    gdf.to_file(output_dir.joinpath(f"{ex}filtered_for_artefacts_assets.gpkg"), driver='GPKG')
+    gdf.to_file(output_dir.joinpath(f"{ex}_filtered_for_artefacts_assets.gpkg"), driver='GPKG')
 
     # Define aggregation dictionary
     agg_dict = {
@@ -695,6 +634,10 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
         'tunnel_length': 'sum',
         **{col: ['mean', 'max', 'median'] for col in ev_cols}
     }
+
+    for extra_col in ['EV2_me', 'EV2_ma']:
+        if extra_col in gdf.columns:
+            agg_dict[extra_col] = ['mean', 'max']
 
     # Dissolve geometries and aggregate
     gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
@@ -719,63 +662,13 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
     gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
 
     # Save to file
-    gdf_agg.to_file(output_dir.joinpath(f"{ex}Aggregated_flooded_segments.gpkg"), driver='GPKG')
+    gdf_agg.to_file(output_dir.joinpath(f"{ex}_Aggregated.gpkg"), driver='GPKG')
 
     return gdf_agg
 
 
 
-def Thresholding_for_artefacts(gdf, output_dir):
-    """
-    creates columns based on different thresholding criteria and saves results to file.
-
-    Parameters:
-        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
-        output_dir (Path): Output directory for saving files.
-        
-    """
-    gdf['me_30_fr_20'] = 0
-    gdf['me_20_fr_20'] = 0
-    gdf['me_20_fr_30'] = 0
-    gdf['me_10_fr_20'] = 0
-    gdf['me_20'] = 0
-    gdf['isolated'] = 0
-    gdf['is_flooded'] = 0
-    gdf['Asset'] = 0
-    gdf['fr_20'] = 0
-
-    
-    gdf.loc[gdf['EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.3) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) & (gdf['EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_10_fr_20'] += 1
-    gdf.loc[gdf['EV1_me'].fillna(0) < 0.1, 'is_flooded'] += 1
-    gdf.loc[gdf['EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1  
-    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 60) | (gdf['tunnel_percentage'].fillna(0) >= 60), 'Asset'] += 1
-
-    # Step 4: Define the isolation check
-    def is_isolated(index, flooded_series):
-        if not flooded_series.iloc[index]:
-            return False
-        neighbors = []
-        if index > 0:
-            neighbors.append(flooded_series.iloc[index - 1])
-        if index < len(flooded_series) - 1:
-            neighbors.append(flooded_series.iloc[index + 1])
-        return not any(neighbors)
-
-    #gdf['is_isolated'] = [is_isolated(i, gdf['is_flooded']) for i in range(len(gdf))]
-    #gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
-
-    gdf['is_isolated'] = [1 if is_isolated(i, gdf['is_flooded']) else 0 for i in range(len(gdf))]
-
-    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
-    gdf.to_file(output_dir.joinpath(f"flooded_segments_threshold_test.gpkg"), driver='GPKG')
-
-    return gdf
-
-def Thresholding_for_artefacts_ver02(gdf, output_dir):
+def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     """
     creates columns based on different thresholding criteria and saves results to file.
 
@@ -797,20 +690,20 @@ def Thresholding_for_artefacts_ver02(gdf, output_dir):
     gdf['Asset'] = 0
     gdf['fr_20'] = 0
     gdf['artefact'] = 0
+    
 
     
-    gdf.loc[gdf['EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.3) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.2) | (gdf['EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) | (gdf['EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) | (gdf['EV1_fr'].fillna(0) <= 0.25), 'OR_me_10_fr_25'] += 1
-    gdf.loc[(gdf['EV1_me'].fillna(0) <= 0.1) & (gdf['EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
-    
-    gdf.loc[gdf['EV1_me'].fillna(0) > 0.1, 'is_flooded'] += 1
-    gdf.loc[gdf['EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1
-    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['tunnel_percentage'].fillna(0) >= 20) | (gdf['viaduct_percentage'].fillna(0) >= 30), 'Asset'] += 1
+    gdf.loc[gdf[f'{x}EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.3) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.25), 'OR_me_10_fr_25'] += 1
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
 
+    gdf.loc[gdf[f'{x}EV1_me'].fillna(0) > 0.1, 'is_flooded'] += 1
+    gdf.loc[gdf[f'{x}EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1
+    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['tunnel_percentage'].fillna(0) >= 20), 'Asset'] += 1
     #gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1), 'artefact'] += 1
 
 
@@ -829,11 +722,11 @@ def Thresholding_for_artefacts_ver02(gdf, output_dir):
     #gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
 
     gdf['is_isolated'] = [1 if is_isolated(i, gdf['is_flooded']) else 0 for i in range(len(gdf))]
-    gdf.loc[(gdf['EV1_ma'].fillna(0) >= 0.3) & (gdf['EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
+    gdf.loc[(gdf[f'{x}EV1_ma'].fillna(0) >= 0.3) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
     gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1) | (gdf['viaduct_percentage'] >= 10), 'artefact'] += 1
 
-    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
-    gdf.to_file(output_dir.joinpath(f"flooded_segments_threshold_OR.gpkg"), driver='GPKG')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    gdf.to_file(output_dir.joinpath(f"{ex}_Threshold_OR.gpkg"), driver='GPKG')
 
     return gdf    
 
