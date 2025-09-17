@@ -6,6 +6,7 @@ from pathlib import Path
 import geopandas as gpd
 from shapely.geometry import Point
 from typing import List, Dict, Tuple, Optional
+import re
 
 def load_traffic_centers(traffic_centers_file: str, buffer_distance: int = 1000) -> gpd.GeoDataFrame:
     """
@@ -572,7 +573,16 @@ def Filter_and_aggregate_flooded_segments_damage(gdf, output_dir,ex, dissolve_co
     }
 
     # Dissolve geometries and aggregate
-    gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+    # Create a new column for dissolve base by stripping suffixes
+    def strip_suffix(val):
+        # Removes -R, -L, -M at the end (case-insensitive)
+        return re.sub(r'[-_](R|L|M)$', '', str(val), flags=re.IGNORECASE)
+    gdf['dissolve_base'] = gdf[dissolve_col].apply(strip_suffix)
+    gdf_dissolved = gdf.dissolve(by='dissolve_base', aggfunc=agg_dict, as_index=False)
+
+    # Not remove suffixes
+    
+    #gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
 
     # Flatten multi-level columns
     gdf_dissolved.columns = [
@@ -640,7 +650,22 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
             agg_dict[extra_col] = ['mean', 'max']
 
     # Dissolve geometries and aggregate
-    gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+    # Create a new column for dissolve base by stripping suffixes
+    def strip_suffix(val):
+        # Removes -R, -L, -M at the end (case-insensitive)
+        return re.sub(r'[-_](R|L|M)$', '', str(val), flags=re.IGNORECASE)
+    gdf['dissolve_base'] = gdf[dissolve_col].apply(strip_suffix)
+    gdf_dissolved = gdf.dissolve(by='dissolve_base', aggfunc=agg_dict, as_index=False)
+
+    # Not remove suffixes
+    
+    #gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+
+    # Flatten multi-level columns
+    gdf_dissolved.columns = [
+        f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+        for col in gdf_dissolved.columns
+    ]
 
     # Flatten multi-level columns
     gdf_dissolved.columns = [
@@ -662,7 +687,10 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
     gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
 
     # Save to file
-    gdf_agg.to_file(output_dir.joinpath(f"{ex}_Aggregated.gpkg"), driver='GPKG')
+    output_file = output_dir.joinpath(f"{ex}_Aggregated.gpkg")
+    if output_file.exists():
+        output_file.unlink()
+    gdf_agg.to_file(output_file, driver='GPKG')
 
     return gdf_agg
 
