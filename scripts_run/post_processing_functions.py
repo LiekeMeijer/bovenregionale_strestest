@@ -705,10 +705,10 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
         output_dir (Path): Output directory for saving files.
         
     """
-    gdf['me_30_fr_20'] = 0
-    gdf['me_20_fr_20'] = 0
-    gdf['me_20_fr_30'] = 0
-    gdf['OR_me_10_fr_20'] = 0
+    #gdf['me_30_fr_20'] = 0
+    #gdf['me_20_fr_20'] = 0
+    #gdf['me_20_fr_30'] = 0
+    #gdf['OR_me_10_fr_20'] = 0
     gdf['OR_me_10_fr_25'] = 0
     gdf['AND_me_10_fr_20'] = 0
     gdf['culvert'] = 0
@@ -716,24 +716,24 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     gdf['isolated'] = 0
     gdf['is_flooded'] = 0
     gdf['Asset'] = 0
-    gdf['fr_20'] = 0
+    gdf['flooded_bridge'] = 0
     gdf['artefact'] = 0
     
 
     
-    gdf.loc[gdf[f'{x}EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.3) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
+    #gdf.loc[gdf[f'{x}EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.3) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
     gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.25), 'OR_me_10_fr_25'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
 
-    gdf.loc[gdf[f'{x}EV1_me'].fillna(0) > 0.1, 'is_flooded'] += 1
-    gdf.loc[gdf[f'{x}EV1_fr'].fillna(0) < 0.2, 'fr_20'] += 1
+    
+    
     gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['tunnel_percentage'].fillna(0) >= 20), 'Asset'] += 1
     #gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1), 'artefact'] += 1
-
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) >= 0.2)&(gdf['OR_me_10_fr_25'] == 0)&(gdf['viaduct_percentage'] < 10), 'is_flooded'] += 1
 
     # Step 4: Define the isolation check
     def is_isolated(index, flooded_series):
@@ -750,9 +750,27 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     #gdf.loc[gdf['is_isolated'], 'Flood_uncertainty'] += 1
 
     gdf['is_isolated'] = [1 if is_isolated(i, gdf['is_flooded']) else 0 for i in range(len(gdf))]
-    gdf.loc[(gdf[f'{x}EV1_ma'].fillna(0) >= 0.3) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
-    gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1) | (gdf['viaduct_percentage'] >= 10), 'artefact'] += 1
+    #gdf.loc[(gdf[f'{x}EV1_ma'].fillna(0) >= 0.3) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
+    gdf.loc[(gdf['is_isolated'] == 0) & (gdf['bridge_percentage'] >= 10) & (gdf['is_flooded'] == 1), 'flooded_bridge'] += 1
+    gdf.loc[(gdf['OR_me_10_fr_25'] == 1) | (gdf['viaduct_percentage'] >= 10), 'artefact'] += 1
 
+    gdf['flooded_tunnel_entrance'] = 0
+
+    for idx, row in gdf.iterrows():
+        if 0 < row['tunnel_percentage'] < 100 and row['is_flooded'] == 1:
+            neighbors = gdf[gdf.geometry.touches(row.geometry)]
+            if any(neighbors['tunnel_percentage'] > 90):
+                gdf.at[idx, 'flooded_tunnel_entrance'] = 1
+    '''
+    tunnel_perc = gdf['tunnel_percentage'].fillna(0).values
+    is_flooded = gdf['is_flooded'].fillna(0).values
+    for i in range(len(gdf)):
+        if 0 < tunnel_perc[i] < 100 and is_flooded[i] == 1:
+            left = tunnel_perc[i-1] if i > 0 else 0
+            right = tunnel_perc[i+1] if i < len(gdf)-1 else 0
+            if left > 90 or right > 90:
+                gdf.at[gdf.index[i], 'flooded_tunnel_entrance'] = 1
+    '''
     output_dir.mkdir(parents=True, exist_ok=True)
     gdf.to_file(output_dir.joinpath(f"{ex}_Threshold_OR.gpkg"), driver='GPKG')
 
