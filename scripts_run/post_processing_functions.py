@@ -625,7 +625,8 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
 
     
     ev_cols = [col for col in gdf.columns if col.startswith('EV1')]
-    condition = (gdf['artefact'] > 0) | (gdf['Asset'] > 0) | (gdf['EV1_me'] < 0.2)
+    #condition = (gdf['artefact'] > 0) | (gdf['Asset'] > 0) | (gdf['EV1_me'] < 0.2)
+    condition = (gdf['EV1_me'] < 0.1)
     for col in ev_cols:
         gdf.loc[condition, col] = 0
 
@@ -634,7 +635,7 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
     gdf['bridge_length'] = (gdf['bridge_percentage'] / 100) * gdf['length']
     gdf['tunnel_length'] = (gdf['tunnel_percentage'] / 100) * gdf['length']
 
-    gdf.to_file(output_dir.joinpath(f"{ex}_filtered_for_artefacts_assets.gpkg"), driver='GPKG')
+    #gdf.to_file(output_dir.joinpath(f"{ex}_filtered_for_artefacts_assets.gpkg"), driver='GPKG')
 
     # Define aggregation dictionary
     agg_dict = {
@@ -687,7 +688,7 @@ def Filter_and_aggregate_flooded_segments_exposure(gdf, output_dir,ex, dissolve_
     gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
 
     # Save to file
-    output_file = output_dir.joinpath(f"{ex}_Aggregated.gpkg")
+    output_file = output_dir.joinpath(f"{ex}_schakels.gpkg")
     if output_file.exists():
         output_file.unlink()
     gdf_agg.to_file(output_file, driver='GPKG')
@@ -718,6 +719,7 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     gdf['Asset'] = 0
     gdf['flooded_bridge'] = 0
     gdf['artefact'] = 0
+    gdf['remove'] = 0
     
 
     
@@ -731,10 +733,14 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
 
     
     
-    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['tunnel_percentage'].fillna(0) >= 20), 'Asset'] += 1
+    gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['viaduct_percentage'].fillna(0) >= 10), 'Asset'] += 1
+    
     #gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1), 'artefact'] += 1
-    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) >= 0.2)&(gdf['OR_me_10_fr_25'] == 0)&(gdf['viaduct_percentage'] < 10), 'is_flooded'] += 1
-
+    gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) >= 0.1)&(gdf['OR_me_10_fr_25'] == 0)&(gdf['viaduct_percentage'] < 10), 'is_flooded'] += 1
+    
+    gdf_or_me_10_fr_25 = gdf[gdf['OR_me_10_fr_25'] == 0].copy()
+    gdf_bridge_or_viaduct_removed = gdf_or_me_10_fr_25[gdf_or_me_10_fr_25['Asset'] == 0].copy()
+    tunnels_removed = gdf_bridge_or_viaduct_removed[gdf_bridge_or_viaduct_removed['tunnel_percentage'].fillna(0) < 10].copy()
     # Step 4: Define the isolation check
     def is_isolated(index, flooded_series):
         if not flooded_series.iloc[index]:
@@ -753,7 +759,8 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     #gdf.loc[(gdf[f'{x}EV1_ma'].fillna(0) >= 0.3) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3) & (gdf['is_isolated'].fillna(0) == 1), 'culvert'] += 1
     gdf.loc[(gdf['is_isolated'] == 0) & (gdf['bridge_percentage'] >= 10) & (gdf['is_flooded'] == 1), 'flooded_bridge'] += 1
     gdf.loc[(gdf['OR_me_10_fr_25'] == 1) | (gdf['viaduct_percentage'] >= 10), 'artefact'] += 1
-
+    gdf.loc[(gdf['OR_me_10_fr_25'] == 1) | (gdf['Asset'] == 1) | (gdf['tunnel_percentage'].fillna(0) >= 10), 'remove'] += 1
+    '''
     gdf['flooded_tunnel_entrance'] = 0
 
     for idx, row in gdf.iterrows():
@@ -762,17 +769,119 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
             if any(neighbors['tunnel_percentage'] > 90):
                 gdf.at[idx, 'flooded_tunnel_entrance'] = 1
     '''
-    tunnel_perc = gdf['tunnel_percentage'].fillna(0).values
-    is_flooded = gdf['is_flooded'].fillna(0).values
-    for i in range(len(gdf)):
-        if 0 < tunnel_perc[i] < 100 and is_flooded[i] == 1:
-            left = tunnel_perc[i-1] if i > 0 else 0
-            right = tunnel_perc[i+1] if i < len(gdf)-1 else 0
-            if left > 90 or right > 90:
-                gdf.at[gdf.index[i], 'flooded_tunnel_entrance'] = 1
-    '''
+    def mark_flooded_tunnel_entrances(gdf):
+        """
+        Marks flooded tunnel entrances in the GeoDataFrame.
+        Sets 'flooded_tunnel_entrance' to 1 for segments that are partially tunnels,
+        are flooded, and touch a neighbor with >90% tunnel percentage.
+        """
+        gdf['flooded_tunnel_entrance'] = 0
+        for idx, row in gdf.iterrows():
+            if 0 < row['tunnel_percentage'] < 100 and row['is_flooded'] == 1:
+                neighbors = gdf[gdf.geometry.touches(row.geometry)]
+                if any(neighbors['tunnel_percentage'] > 90):
+                    gdf.at[idx, 'flooded_tunnel_entrance'] = 1
+        return gdf
+    
+    gdf = mark_flooded_tunnel_entrances(gdf)
+    Tunnels_gdf = mark_flooded_tunnel_entrances(gdf_bridge_or_viaduct_removed)
     output_dir.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(output_dir.joinpath(f"{ex}_Threshold_OR.gpkg"), driver='GPKG')
+    gdf_or_me_10_fr_25.to_file(output_dir.joinpath(f"{ex}_Artefact_removed.gpkg"), driver='GPKG')
+    Tunnels_gdf.to_file(output_dir.joinpath(f"{ex}_Artefact_Bridges_Viaducts_removed.gpkg"), driver='GPKG')
+    tunnels_removed.to_file(output_dir.joinpath(f"{ex}_Artefact_Bridges_Viaducts_Tunnels_removed.gpkg"), driver='GPKG')
+    gdf.to_file(output_dir.joinpath(f"{ex}_Filtering_all_columns.gpkg"), driver='GPKG')
 
     return gdf    
 
+def Aggregate_flooded_segments(gdf, output_dir,ex, dissolve_col='NETWERKSCH'):
+    """
+    Aggregates flooded segments and saves results to file.
+
+    Parameters:
+        gdf (GeoDataFrame): Input GeoDataFrame with flood columns.
+        output_dir (Path): Output directory for saving files.
+        dissolve_col (str): Column to dissolve by (default: 'NETWERKSCH').
+    """
+
+
+    gdf = gdf.set_crs("EPSG:28992", allow_override=True)
+
+    
+    ev_cols = [col for col in gdf.columns if col.startswith('F_EV')]
+    #condition = (gdf['artefact'] > 0) | (gdf['Asset'] > 0) | (gdf['EV1_me'] < 0.2)
+    condition = (gdf['remove'] == 1)
+    for col in ev_cols:
+        gdf.loc[condition, col] = 0
+
+    dam_cols = [col for col in gdf.columns if col.startswith('dam_EV')]
+    #condition = (gdf['artefact'] > 0) | (gdf['Asset'] > 0) | (gdf['EV1_me'] < 0.2)
+    condition = (gdf['remove'] == 1)
+    for col in dam_cols:
+        gdf.loc[condition, col] = 0
+
+    # Calculate flooded length per segment
+    gdf['flooded_length'] = gdf['F_EV1_fr'] * gdf['length']
+    gdf['bridge_length'] = (gdf['bridge_percentage'] / 100) * gdf['length']
+    gdf['tunnel_length'] = (gdf['tunnel_percentage'] / 100) * gdf['length']
+
+    #gdf.to_file(output_dir.joinpath(f"{ex}_filtered_for_artefacts_assets.gpkg"), driver='GPKG')
+
+    # Define aggregation dictionary
+    agg_dict = {
+        'length': 'sum',
+        'flooded_length': 'sum',
+        'bridge_length': 'sum',
+        'tunnel_length': 'sum',
+        'dam_EV1_HZ': 'sum',
+        **{col: ['mean', 'max', 'median'] for col in ev_cols}
+    }
+
+    for extra_col in ['F_EV2_me', 'F_EV2_ma']:
+        if extra_col in gdf.columns:
+            agg_dict[extra_col] = ['mean', 'max']
+
+    # Dissolve geometries and aggregate
+    # Create a new column for dissolve base by stripping suffixes
+    #def strip_suffix(val):
+        # Removes -R, -L, -M at the end (case-insensitive)
+    #    return re.sub(r'[-_](R|L|M)$', '', str(val), flags=re.IGNORECASE)
+    #gdf['dissolve_base'] = gdf[dissolve_col].apply(strip_suffix)
+    #gdf_dissolved = gdf.dissolve(by='dissolve_base', aggfunc=agg_dict, as_index=False)
+
+    # Not remove suffixes
+    
+    gdf_dissolved = gdf.dissolve(by=dissolve_col, aggfunc=agg_dict, as_index=False)
+
+    # Flatten multi-level columns
+    gdf_dissolved.columns = [
+        f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+        for col in gdf_dissolved.columns
+    ]
+
+    # Flatten multi-level columns
+    #gdf_dissolved.columns = [
+    #    f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+    #    for col in gdf_dissolved.columns
+    #]
+
+    # Rename for clarity
+    gdf_dissolved = gdf_dissolved.rename(columns={
+        'length_sum': 'total_length',
+        'flooded_length_sum': 'flooded_length',
+        'dam_EV1_HZ_sum': 'total_damage'
+    })
+
+    # Calculate fraction flooded
+    gdf_dissolved['fraction_flooded'] = gdf_dissolved['flooded_length'] / gdf_dissolved['total_length']
+
+    # Convert to GeoDataFrame and set CRS
+    gdf_agg = gpd.GeoDataFrame(gdf_dissolved, geometry='geometry', crs=gdf.crs)
+    gdf_agg = gdf_agg.set_crs("EPSG:28992", allow_override=True)
+
+    # Save to file
+    output_file = output_dir.joinpath(f"{ex}_schakels.gpkg")
+    if output_file.exists():
+        output_file.unlink()
+    gdf_agg.to_file(output_file, driver='GPKG')
+
+    return gdf_agg
