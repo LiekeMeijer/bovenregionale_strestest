@@ -352,25 +352,21 @@ def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
     """
     For each cluster (from 'cluster_id'), create a point (centroid snapped to nearest line in cluster)
     and aggregate the specified column using the given method ('mean', 'median', 'max').
-    
-    Args:
-        gdf: GeoDataFrame with 'cluster_id' column
-        aggregation_column: Name of the column to aggregate
-        method: Aggregation method ('mean', 'median', 'max')
-        
-    Returns:
-        GeoDataFrame with one point per cluster and aggregated column
     """
     clusters = []
     for cluster_id, group in gdf.groupby("cluster_id"):
-        # Aggregate geometry: union of all geometries in cluster
+        # Aggregate geometry: union of all geometries in cluster (include all segments)
         union_geom = group.geometry.unary_union
-        # Centroid of union
         centroid = union_geom.centroid
-        # Snap centroid to nearest point on the unioned geometry (line)
         snapped_point, _ = nearest_points(union_geom, centroid)
-        # Aggregate values
-        values = group[aggregation_column].dropna()
+
+        # Exclude segments with remove == 1 from numeric aggregation only
+        group_for_agg = group
+        if "remove" in group.columns:
+            group_for_agg = group[group["remove"] != 1]
+
+        values = group_for_agg[aggregation_column].dropna()
+
         if len(values) == 0:
             agg_value = np.nan
         elif method == "mean":
@@ -380,7 +376,8 @@ def aggregate_clusters_to_points(gdf, aggregation_column, method="mean"):
         elif method == "max":
             agg_value = values.max()
         else:
-            raise ValueError("Unknown aggregation method: {}".format(method))
+            raise ValueError(f"Unknown aggregation method: {method}")
+
         clusters.append({
             "cluster_id": cluster_id,
             "geometry": snapped_point,
