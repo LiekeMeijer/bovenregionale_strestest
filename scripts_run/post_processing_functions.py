@@ -7,6 +7,103 @@ import geopandas as gpd
 from shapely.geometry import Point
 from typing import List, Dict, Tuple, Optional
 import re
+from rasterio.merge import merge as rio_merge
+
+
+def mosaic_region_flood_maps(region: str, base_path: str, method: str = 'max', res: Optional[float] = None,
+                             out_dir: Optional[Path] = None) -> Optional[Path]:
+    """
+    Build a single mosaic for a region from all hazard rasters.
+    method: one of {'first','last','min','max','sum','count'} supported by rasterio.merge.
+    res: target pixel size in map units. If None, use smallest (highest resolution) among inputs.
+    Returns path to the mosaic GeoTIFF or None if nothing to mosaic.
+    """
+    files = get_flood_map_files(region, base_path)
+    if not files:
+        print(f"No flood maps to mosaic for {region}")
+        return None
+
+    datasets = [rasterio.open(fp) for fp in files]
+    try:
+        # Determine resolution (smallest pixel size)
+        if res is None:
+            pix_sizes = [min(abs(ds.transform.a), abs(ds.transform.e)) for ds in datasets]
+            res = float(min(pix_sizes))
+
+        # Unify nodata (fallback to 0 if missing)
+        nd = next((ds.nodata for ds in datasets if ds.nodata is not None), 0.0)
+
+        mosaic_arr, mosaic_transform = rio_merge(
+            datasets,
+            nodata=nd,
+            res=res,
+            method=method  # 'max' to let the highest depth win in overlaps
+        )
+
+        meta = datasets[0].meta.copy()
+        meta.update({
+            "driver": "GTiff",
+            "height": mosaic_arr.shape[1],
+            "width": mosaic_arr.shape[2],
+            "transform": mosaic_transform,
+            "count": mosaic_arr.shape[0],
+            "nodata": nd,
+            "compress": "LZW"
+        })
+
+        # Output
+        if out_dir is None:
+            out_dir = Path(base_path) / region / "Inputs" / "static" / "hazard" / "_mosaic"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"hazard_mosaic_{method}.tif"
+
+        with rasterio.open(out_path, "w", **meta) as dst:
+            dst.write(mosaic_arr)
+
+        print(f"Mosaic created for {region}: {out_path}")
+        return out_path
+    finally:
+        for ds in datasets:
+            ds.close()
+
+def process_region_flood_maps_mosaic(region: str, gdf_buffered: gpd.GeoDataFrame, hazard_maps_base_path: str,
+                                     mosaic_method: str = 'max') -> Tuple[gpd.GeoDataFrame, List[Dict]]:
+    """
+    Process a region by first mosaicking its flood maps, then sampling buffers once.
+    """
+    print(f"\n=== Processing region (mosaic): {region} ===")
+    gdf_result = gdf_buffered.copy()
+    region_results: List[Dict] = []
+
+    mosaic_path = mosaic_region_flood_maps(region, hazard_maps_base_path, method=mosaic_method)
+    if mosaic_path is None:
+        return gdf_result, region_results
+
+    flood_result = extract_flood_depths_from_raster(mosaic_path, gdf_buffered)
+    if flood_result is not None:
+        # Label as mosaic in the column suffix
+        flood_result['file_name'] = f"mosaic_{mosaic_method}"
+        flood_result['region'] = region
+        gdf_result = add_flood_columns_to_gdf(gdf_result, flood_result, region)
+        region_results.append(flood_result)
+
+    return gdf_result, region_results
+
+def process_all_regions_mosaic(gdf_buffered: gpd.GeoDataFrame, region_list: List[str],
+                               hazard_maps_base_path: str, mosaic_method: str = 'max'
+                               ) -> Tuple[gpd.GeoDataFrame, List[Dict]]:
+    """
+    Process all regions using a mosaic per region before overlaying buffers.
+    """
+    result_gdf = gdf_buffered.copy()
+    all_results: List[Dict] = []
+    for region in region_list:
+        result_gdf, region_results = process_region_flood_maps_mosaic(
+            region, result_gdf, hazard_maps_base_path, mosaic_method=mosaic_method
+        )
+        all_results.extend(region_results)
+    return result_gdf, all_results
+
 
 def load_traffic_centers(traffic_centers_file: str, buffer_distance: int = 1000) -> gpd.GeoDataFrame:
     """

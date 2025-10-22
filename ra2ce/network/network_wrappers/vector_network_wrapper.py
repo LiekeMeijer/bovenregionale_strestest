@@ -94,11 +94,12 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "bridge",
                     "tunnel",
                     'id_NWB',
-                    'BST_CODE_N',
+                    'BST_CODE_NWB',
                     'WVK_ID',
                     'FOW_NWB',
                     'RIJRICHTNG',
-                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR_HW', 'NWBWGDL_HW'
+                    'HECTO_LTTR_NWB',
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN', 'NETWERKSCH01_HWN','NWBWGNR_HWN', 'NWBWGDL_HWN'
                 ],
             )
         else:
@@ -112,11 +113,13 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     "bridge",
                     "tunnel",
                     'id_NWB',
-                    'BST_CODE_N',
+                    'BST_CODE_NWB',
                     'WVK_ID',
                     'FOW_NWD',
                     'RIJRICHTNG',
-                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH', 'NWBWGNR_HW', 'NWBWGDL_HW'
+                    'HECTO_LTTR_NWB',
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN', 'NWBWGNR_HWN', 'NWBWGDL_HWN',
+                    ,'NETWERKSCH01_HWN'
                 ],
             )
         edges, nodes = self.get_network_edges_and_nodes_from_graph(graph)
