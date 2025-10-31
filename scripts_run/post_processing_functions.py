@@ -7,102 +7,6 @@ import geopandas as gpd
 from shapely.geometry import Point
 from typing import List, Dict, Tuple, Optional
 import re
-from rasterio.merge import merge as rio_merge
-
-
-def mosaic_region_flood_maps(region: str, base_path: str, method: str = 'max', res: Optional[float] = None,
-                             out_dir: Optional[Path] = None) -> Optional[Path]:
-    """
-    Build a single mosaic for a region from all hazard rasters.
-    method: one of {'first','last','min','max','sum','count'} supported by rasterio.merge.
-    res: target pixel size in map units. If None, use smallest (highest resolution) among inputs.
-    Returns path to the mosaic GeoTIFF or None if nothing to mosaic.
-    """
-    files = get_flood_map_files(region, base_path)
-    if not files:
-        print(f"No flood maps to mosaic for {region}")
-        return None
-
-    datasets = [rasterio.open(fp) for fp in files]
-    try:
-        # Determine resolution (smallest pixel size)
-        if res is None:
-            pix_sizes = [min(abs(ds.transform.a), abs(ds.transform.e)) for ds in datasets]
-            res = float(min(pix_sizes))
-
-        # Unify nodata (fallback to 0 if missing)
-        nd = next((ds.nodata for ds in datasets if ds.nodata is not None), 0.0)
-
-        mosaic_arr, mosaic_transform = rio_merge(
-            datasets,
-            nodata=nd,
-            res=res,
-            method=method  # 'max' to let the highest depth win in overlaps
-        )
-
-        meta = datasets[0].meta.copy()
-        meta.update({
-            "driver": "GTiff",
-            "height": mosaic_arr.shape[1],
-            "width": mosaic_arr.shape[2],
-            "transform": mosaic_transform,
-            "count": mosaic_arr.shape[0],
-            "nodata": nd,
-            "compress": "LZW"
-        })
-
-        # Output
-        if out_dir is None:
-            out_dir = Path(base_path) / region / "Inputs" / "static" / "hazard" / "_mosaic"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"hazard_mosaic_{method}.tif"
-
-        with rasterio.open(out_path, "w", **meta) as dst:
-            dst.write(mosaic_arr)
-
-        print(f"Mosaic created for {region}: {out_path}")
-        return out_path
-    finally:
-        for ds in datasets:
-            ds.close()
-
-def process_region_flood_maps_mosaic(region: str, gdf_buffered: gpd.GeoDataFrame, hazard_maps_base_path: str,
-                                     mosaic_method: str = 'max') -> Tuple[gpd.GeoDataFrame, List[Dict]]:
-    """
-    Process a region by first mosaicking its flood maps, then sampling buffers once.
-    """
-    print(f"\n=== Processing region (mosaic): {region} ===")
-    gdf_result = gdf_buffered.copy()
-    region_results: List[Dict] = []
-
-    mosaic_path = mosaic_region_flood_maps(region, hazard_maps_base_path, method=mosaic_method)
-    if mosaic_path is None:
-        return gdf_result, region_results
-
-    flood_result = extract_flood_depths_from_raster(mosaic_path, gdf_buffered)
-    if flood_result is not None:
-        # Label as mosaic in the column suffix
-        flood_result['file_name'] = f"mosaic_{mosaic_method}"
-        flood_result['region'] = region
-        gdf_result = add_flood_columns_to_gdf(gdf_result, flood_result, region)
-        region_results.append(flood_result)
-
-    return gdf_result, region_results
-
-def process_all_regions_mosaic(gdf_buffered: gpd.GeoDataFrame, region_list: List[str],
-                               hazard_maps_base_path: str, mosaic_method: str = 'max'
-                               ) -> Tuple[gpd.GeoDataFrame, List[Dict]]:
-    """
-    Process all regions using a mosaic per region before overlaying buffers.
-    """
-    result_gdf = gdf_buffered.copy()
-    all_results: List[Dict] = []
-    for region in region_list:
-        result_gdf, region_results = process_region_flood_maps_mosaic(
-            region, result_gdf, hazard_maps_base_path, mosaic_method=mosaic_method
-        )
-        all_results.extend(region_results)
-    return result_gdf, all_results
 
 
 def load_traffic_centers(traffic_centers_file: str, buffer_distance: int = 1000) -> gpd.GeoDataFrame:
@@ -554,22 +458,24 @@ def get_z_height_optimized(lines_gdf, points_gdf, threshold=50.0):
     return z_heights
 
 
-def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf,viaducts_gdf):
+def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf, viaducts_gdf, lowerlying_gdf):
     """
-    Calculates the percentage of each line segment overlapped by tunnels and bridges.
-    Updates lines_gdf in-place with 'tunnel_percentage' and 'bridge_percentage' columns.
+    Calculates the percentage of each line segment overlapped by tunnels, bridges, viaducts, and lowerlying areas.
+    Updates lines_gdf in-place with 'tunnel_percentage', 'bridge_percentage', 'viaduct_percentage', and 'lowerlying_percentage' columns.
     """
     # Ensure all use the same CRS
     bridges_gdf = bridges_gdf.to_crs(lines_gdf.crs)
     tunnels_gdf = tunnels_gdf.to_crs(lines_gdf.crs)
     viaducts_gdf = viaducts_gdf.to_crs(lines_gdf.crs)
+    lowerlying_gdf = lowerlying_gdf.to_crs(lines_gdf.crs)
 
     # Initialize percentage columns
     lines_gdf['tunnel_percentage'] = 0.0
     lines_gdf['bridge_percentage'] = 0.0
     lines_gdf['viaduct_percentage'] = 0.0
+    lines_gdf['lowerlying_percentage'] = 0.0
 
-    # Calculate tunnel overlay percentages (avoiding double counting)
+    # Calculate tunnel overlay percentages
     for idx, line_row in lines_gdf.iterrows():
         line_geom = line_row.geometry
         intersecting_tunnels = tunnels_gdf[tunnels_gdf.geometry.intersects(line_geom)]
@@ -586,7 +492,7 @@ def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf,viaducts_g
                 percentage = (overlap_length / line_geom.length) * 100
                 lines_gdf.loc[idx, 'tunnel_percentage'] = percentage
 
-    # Calculate bridge overlay percentages (avoiding double counting)
+    # Calculate bridge overlay percentages
     for idx, line_row in lines_gdf.iterrows():
         line_geom = line_row.geometry
         intersecting_bridges = bridges_gdf[bridges_gdf.geometry.intersects(line_geom)]
@@ -603,6 +509,7 @@ def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf,viaducts_g
                 percentage = (overlap_length / line_geom.length) * 100
                 lines_gdf.loc[idx, 'bridge_percentage'] = percentage
 
+    # Calculate viaduct overlay percentages
     for idx, line_row in lines_gdf.iterrows():
         line_geom = line_row.geometry
         intersecting_viaducts = viaducts_gdf[viaducts_gdf.geometry.intersects(line_geom)]
@@ -618,6 +525,23 @@ def calculate_overlay_percentages(lines_gdf, bridges_gdf, tunnels_gdf,viaducts_g
                     overlap_length = 0
                 percentage = (overlap_length / line_geom.length) * 100
                 lines_gdf.loc[idx, 'viaduct_percentage'] = percentage
+
+    # Calculate lowerlying area overlay percentages
+    for idx, line_row in lines_gdf.iterrows():
+        line_geom = line_row.geometry
+        intersecting_lowerlying = lowerlying_gdf[lowerlying_gdf.geometry.intersects(line_geom)]
+        if not intersecting_lowerlying.empty:
+            lowerlying_union = intersecting_lowerlying.geometry.unary_union
+            intersection = line_geom.intersection(lowerlying_union)
+            if not intersection.is_empty:
+                if intersection.geom_type == 'LineString':
+                    overlap_length = intersection.length
+                elif intersection.geom_type == 'MultiLineString':
+                    overlap_length = sum(geom.length for geom in intersection.geoms)
+                else:
+                    overlap_length = 0
+                percentage = (overlap_length / line_geom.length) * 100
+                lines_gdf.loc[idx, 'lowerlying_percentage'] = percentage
 
     return lines_gdf
 
@@ -800,10 +724,7 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
         output_dir (Path): Output directory for saving files.
         
     """
-    #gdf['me_30_fr_20'] = 0
-    #gdf['me_20_fr_20'] = 0
-    #gdf['me_20_fr_30'] = 0
-    #gdf['OR_me_10_fr_20'] = 0
+    
     gdf['OR_me_10_fr_25'] = 0
     gdf['AND_me_10_fr_20'] = 0
     gdf['culvert'] = 0
@@ -816,19 +737,8 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     gdf['remove'] = 0
     
 
-    
-    #gdf.loc[gdf[f'{x}EV1_me'].fillna(0) < 0.2, 'me_20'] += 1
-    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.3) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_30_fr_20'] += 1
-    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'me_20_fr_20'] += 1
-    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.2) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.3), 'me_20_fr_30'] += 1
-    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'OR_me_10_fr_20'] += 1
     gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) | (gdf[f'{x}EV1_fr'].fillna(0) <= 0.25), 'OR_me_10_fr_25'] += 1
-    #gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) <= 0.1) & (gdf[f'{x}EV1_fr'].fillna(0) <= 0.2), 'AND_me_10_fr_20'] += 1
-
-    
-    
     gdf.loc[(gdf['bridge_percentage'].fillna(0) >= 10) | (gdf['viaduct_percentage'].fillna(0) >= 10), 'Asset'] += 1
-    
     #gdf.loc[(gdf['culvert'] == 1) | (gdf['OR_me_10_fr_25'] == 1), 'artefact'] += 1
     gdf.loc[(gdf[f'{x}EV1_me'].fillna(0) >= 0.1)&(gdf['OR_me_10_fr_25'] == 0)&(gdf['viaduct_percentage'] < 10), 'is_flooded'] += 1
     
@@ -865,16 +775,28 @@ def Thresholding_for_artefacts(x,ex,gdf, output_dir):
     '''
     def mark_flooded_tunnel_entrances(gdf):
         """
-        Marks flooded tunnel entrances in the GeoDataFrame.
+        Marks flooded tunnel and lowerlying entrances in the GeoDataFrame.
         Sets 'flooded_tunnel_entrance' to 1 for segments that are partially tunnels,
         are flooded, and touch a neighbor with >90% tunnel percentage.
+        Sets 'flooded_lowerlying_entrance' to 1 for segments that are partially lowerlying,
+        are flooded, and touch a neighbor with >90% lowerlying percentage.
         """
         gdf['flooded_tunnel_entrance'] = 0
+        gdf['flooded_lowerlying_entrance'] = 0
+
         for idx, row in gdf.iterrows():
-            if 0 < row['tunnel_percentage'] < 100 and row['is_flooded'] == 1:
+            # Tunnel entrance logic
+            if 0 < row.get('tunnel_percentage', 0) < 100 and row.get('is_flooded', 0) == 1:
                 neighbors = gdf[gdf.geometry.touches(row.geometry)]
                 if any(neighbors['tunnel_percentage'] > 90):
                     gdf.at[idx, 'flooded_tunnel_entrance'] = 1
+
+            # Lowerlying entrance logic
+            if 0 < row.get('lowerlying_percentage', 0) < 100 and row.get('is_flooded', 0) == 1:
+                neighbors = gdf[gdf.geometry.touches(row.geometry)]
+                if any(neighbors['lowerlying_percentage'] > 90):
+                    gdf.at[idx, 'flooded_lowerlying_entrance'] = 1
+
         return gdf
     
     gdf = mark_flooded_tunnel_entrances(gdf)
