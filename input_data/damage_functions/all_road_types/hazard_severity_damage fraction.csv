@@ -1,0 +1,8 @@
+depth;damage
+cm;% of total construction costs
+0;0
+50;0.01
+100;0.03
+150;0.075
+200;0.1
+600;0.2
