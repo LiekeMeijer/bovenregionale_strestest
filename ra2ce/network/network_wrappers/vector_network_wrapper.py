@@ -99,7 +99,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     'FOW_NWB',
                     'RIJRICHTNG',
                     'HECTO_LTTR_NWB',
-                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN', 'NETWERKSCH01_HWN','NWBWGNR_HWN', 'NWBWGDL_HWN'
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN','NWBWGNR_HWN', 'NWBWGDL_HWN','NETWERKSCH01_HWN'
                 ],
             )
         else:
@@ -118,8 +118,7 @@ class VectorNetworkWrapper(NetworkWrapperProtocol):
                     'FOW_NWD',
                     'RIJRICHTNG',
                     'HECTO_LTTR_NWB',
-                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN', 'NWBWGNR_HWN', 'NWBWGDL_HWN',
-                    ,'NETWERKSCH01_HWN'
+                    'NWSCODE', 'NWSNAAM_HW', 'NETWERKSCH_HWN', 'NWBWGNR_HWN', 'NWBWGDL_HWN','NETWERKSCH01_HWN'
                 ],
             )
         edges, nodes = self.get_network_edges_and_nodes_from_graph(graph)
