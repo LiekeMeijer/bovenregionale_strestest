@@ -848,7 +848,7 @@ def Aggregate_flooded_segments(gdf, output_dir,ex, dissolve_col='NETWERKSCH'):
         'flooded_length': 'sum',
         'bridge_length': 'sum',
         'tunnel_length': 'sum',
-        'dam_EV1_HZ': 'sum',
+        'dam_EV1_al': 'sum',
         **{col: ['mean', 'max', 'median'] for col in ev_cols}
     }
 
@@ -884,7 +884,7 @@ def Aggregate_flooded_segments(gdf, output_dir,ex, dissolve_col='NETWERKSCH'):
     gdf_dissolved = gdf_dissolved.rename(columns={
         'length_sum': 'total_length',
         'flooded_length_sum': 'flooded_length',
-        'dam_EV1_HZ_sum': 'total_damage'
+        'dam_EV1_al_sum': 'total_damage'
     })
 
     # Calculate fraction flooded
